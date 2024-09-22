@@ -60,13 +60,13 @@ const showCryptocurrencyList = async (ctx) => {
     };
     
 
-bot.action('ShowReplyKeyboard', (ctx) => showReplyKeyboard(ctx));
+bot.action('ShowReplyKeyboard', showReplyKeyboard);
 
-bot.action(['Weather'], (ctx) => showWeatherList(ctx))
-bot.hears(['🌤️ Weather'], (ctx) => showWeatherList(ctx))
+bot.action(['Weather'], showWeatherList)
+bot.hears(['🌤️ Weather'], showWeatherList)
 
-bot.action(['Cryptocurrency Rates'], (ctx) => showCryptocurrencyList(ctx))
-bot.hears(['📈 Cryptocurrency Rates'], (ctx) => showCryptocurrencyList(ctx))
+bot.action(['Cryptocurrency Rates'], showCryptocurrencyList)
+bot.hears(['📈 Cryptocurrency Rates'], showCryptocurrencyList)
 
 //Main weather location fetch action
 bot.action(/(.+):WEATHER/, async (ctx) =>{
