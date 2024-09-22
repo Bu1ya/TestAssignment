@@ -1,217 +1,188 @@
 //Dependencies
 const { Telegraf, Markup } = require('telegraf');
-const axios = require('axios');
-
-//Currency and weather objects have been moved out to allow for expanded functionality
-class weatherHelper{
-    #ApiKey = '484e4cef38b8b80285dd9e54d5871e91'
-
-    getWeatherByLocation(latitude, longitude){
-        const url = `https://api.openweathermap.org/data/2.5/weather?lat=${latitude}&lon=${longitude}&appid=${this.#ApiKey}`;
-        return axios.get(url)
-    }
-}
-
-class currencyHelper{
-    getCurrencyRateByName(currencyName){
-        const url = `https://api.binance.com/api/v3/ticker/price?symbol=${currencyName}USDT`;
-        return axios.get(url)
-    }
-}
+const {getWeatherByLocation} = require('./util/weather-helper')
+const {getCurrencyRateByName} = require('./util/currency-helper')
+const {getKyivDayTime} = require('./util/daytime-helper')
+const {CITIES, CURRENCY_MAPPING} = require('./constants')
+require('dotenv').config();
 
 //Bot instance
-const bot = new Telegraf('7685296480:AAHRXyxQQH08g64x6flFlHvy0WwWEJgRK7Y')
-
-//Features helpers
-const _weatherHelper = new weatherHelper()
-const _currencyHelper = new currencyHelper()
+const bot = new Telegraf(process.env.BOT_API)
 
 //Global variables
-let waitingForLocation = false
+//let waitingForLocation = false
+let lastMessageId
 
-let Kyiv = [50.4333, 30.5167]
-let London = [51.5085, -0.1257]
-let Warsaw = [52.2298, 21.0118]
 
-let lastMessageId = null;
-
-//Start action
-bot.start((ctx) => {
-    const username = ctx.message.from.username || false
-    const firstname = ctx.message.from.first_name || false
-    const lastname = ctx.message.from.last_name || false
-    
-    replyToUser = `Hello `
-    if(firstname) replyToUser += `${firstname} `
-    if(lastname) replyToUser += `${lastname} `
-    if(username) replyToUser += `(@${username})!`
-
-    ctx.reply(replyToUser + 
-        `\n` + `Now ${new Date().toLocaleString('en-GB', { timeZone: 'Europe/Kyiv' })}. Kyiv` + 
-        `\n` + `What do you want to do?`)
-    
-
-    lastMessageId = ctx.reply('Choose an option:', Markup.keyboard([
-        ['📈 Cryptocurrency Rates', '🌤️ Weather'],
-    ]).resize().oneTime()).message_id;
-})
-
-//Reply keyboard creation after back button press
-bot.action('SHOW_REPLY_KEYBOARD', (ctx) => {
-    if(lastMessageId) ctx.deleteMessage(lastMessageId)
-    lastMessageId = null
-    lastMessageId = ctx.reply('Choose an option:', Markup.keyboard([
-        ['📈 Cryptocurrency Rates', '🌤️ Weather'],
-    ]).resize().oneTime()).message_id;
-})
-
-//WEATHER FEATURE REGION
-
-//Main weather location fetch action
-bot.action(/(.+):WEATHER/, async (ctx) =>{
-    cityName = ctx.match[1]
-    console.log(cityName)
-    let response = null
-    switch(cityName){
-        case 'Kyiv':
-            response = await _weatherHelper.getWeatherByLocation(Kyiv[0], Kyiv[1])
-            break
-        case 'London':
-            response = await _weatherHelper.getWeatherByLocation(London[0], London[1])
-            break
-        case 'Warsaw':
-            response = await _weatherHelper.getWeatherByLocation(Warsaw[0], Warsaw[1])
-            break
-        default:
-            break
+function deleteLastMessage(ctx){
+    if(lastMessageId){
+        ctx.deleteMessage(lastMessageId)
     }
-
-    ctx.deleteMessage(lastMessageId)
     lastMessageId = null
-    ctx.reply(`Weather in ${cityName}:` +
-        `\n` + `Temperature: ${(response.data.main.temp - 273.15).toPrecision(3)}°C` +
-        `\n` + `Feels like: ${(response.data.main.feels_like - 273.15).toPrecision(3)}°C` +
-        `\n` + `Wind: ${response.data.wind.speed.toPrecision(2)} m/s` +
-        `\n\n` + `${new Date().toLocaleString('en-GB', { timeZone: 'Europe/Kyiv' })}`, 
-        Markup.inlineKeyboard([[Markup.button.callback('🔙Back', 'Weather')]])
-    )
+}
 
-    //console.log(response)
-})
+async function showReplyKeyboard(ctx){
+    deleteLastMessage(ctx)
+    
+    const message = await ctx.reply('Choose an option:',
+        Markup.keyboard([['📈 Cryptocurrency Rates', '🌤️ Weather']]).resize().oneTime())
+    
+    lastMessageId = message.message_id
+}
 
 //Creating inline keyboard for weather
 const showWeatherList = async (ctx) => {
-    if(lastMessageId) ctx.deleteMessage(lastMessageId)  
+    deleteLastMessage(ctx)
     
-    const message = await ctx.reply('Choose a location:', Markup.inlineKeyboard([
+    const message = await ctx.reply('Choose a location:', 
+        Markup.inlineKeyboard([
         [Markup.button.callback('🇺🇦 Kyiv', 'Kyiv:WEATHER')],
         [Markup.button.callback('🇬🇧 London', 'London:WEATHER')],
         [Markup.button.callback('🇵🇱 Warsaw', 'Warsaw:WEATHER')],
-        [Markup.button.callback('📍 Weather by location', 'WEATHER_BY_LOCATION')],
-        [Markup.button.callback('🔙 Back', 'SHOW_REPLY_KEYBOARD')],
+        //[Markup.button.callback('📍 Weather by location', 'WEATHER_BY_LOCATION')],
+        [Markup.button.callback('🔙 Back', 'ShowReplyKeyboard')],
     ]));
-    
-    lastMessageId = message.message_id; 
+    lastMessageId = message.message_id
 };
 
-//Weather by location fetch action
-bot.action('WEATHER_BY_LOCATION', async (ctx) =>{
-    waitingForLocation = true
-    ctx.reply('Please share your location by clicking the button below or pin it directly via Telegram.', Markup.keyboard([
-        Markup.button.locationRequest('Send Location')
-    ]).oneTime().resize())
-})
+//Creating inline keyboard for currencies
+const showCryptocurrencyList = async (ctx) => {
+    deleteLastMessage(ctx)
+    
+    const message = await ctx.reply('Choose a currency:', 
+        Markup.inlineKeyboard([
+            [Markup.button.callback('₿ Bitcoin', 'BTC:CURRENCY')],
+            [Markup.button.callback('Ξ Ethereum', 'ETH:CURRENCY')],
+            [Markup.button.callback('🔙Back', 'ShowReplyKeyboard')],
+        ]))
+        
+        lastMessageId = message.message_id
+    };
+    
 
-//Awaiter for message with location
-bot.on('location', async (ctx) => {
-    if (waitingForLocation) {
-        latitude = ctx.message.location.latitude 
-        longitude = ctx.message.location.longitude
+bot.action('ShowReplyKeyboard', (ctx) => showReplyKeyboard(ctx));
 
-        ctx.deleteMessage(lastMessageId)
-        lastMessageId = null
-        try {
-            response = await _weatherHelper.getWeatherByLocation(latitude, longitude);
-            ctx.reply(`Weather at your location(${response.data.name}):` +
-                `\n` + `Temperature: ${(response.data.main.temp - 273.15).toPrecision(3)}°C` +
-                `\n` + `Feels like: ${(response.data.main.feels_like - 273.15).toPrecision(3)}°C` +
-                `\n` + `Wind: ${response.data.wind.speed.toPrecision(2)} m/s` +
-                `\n\n` + `${new Date().toLocaleString('en-GB', { timeZone: 'Europe/Kyiv' })}`, 
-                Markup.inlineKeyboard([[Markup.button.callback('🔙Back', 'Weather')]])
-            )
-        } catch (error) {
-            console.log(error)
-            ctx.reply('Could not fetch weather data. Please try again later.');
-        }
+bot.action(['Weather'], (ctx) => showWeatherList(ctx))
+bot.hears(['🌤️ Weather'], (ctx) => showWeatherList(ctx))
 
-        waitingForLocation = false; // Reset the state
+bot.action(['Cryptocurrency Rates'], (ctx) => showCryptocurrencyList(ctx))
+bot.hears(['📈 Cryptocurrency Rates'], (ctx) => showCryptocurrencyList(ctx))
+
+//Main weather location fetch action
+bot.action(/(.+):WEATHER/, async (ctx) =>{
+    let cityName = ctx.match[1]
+    let locationCoords = CITIES[`${cityName}`]
+
+    let response = await getWeatherByLocation(locationCoords[0], locationCoords[1])
+    
+    deleteLastMessage(ctx)
+
+    if(response == null){
+        const message = await ctx.reply('An unexpected error occurred while retrieving the weather, try again later',
+            Markup.inlineKeyboard([
+                [Markup.button.callback('🔙Return', 'ShowReplyKeyboard')],
+            ])
+        )
+        lastMessageId = message.message_id
+        return
     }
-});
 
-//Weather command catchers
-bot.action(['Weather'], (ctx) => {
-    showWeatherList(ctx);
+    const temp = (response.data.main.temp -273.15).toPrecision(3)
+    const feelsLike = (response.data.main.feels_like -273.15).toPrecision(3)
+    const windSpeed = response.data.wind.speed.toPrecision(2)
+
+    
+    ctx.reply(`Weather in ${cityName}:
+        \n🌡️Temperature: ${temp}°C\n🌡️Feels like: ${feelsLike}°C\n🌬️Wind: ${windSpeed} m/s
+        \n${getKyivDayTime()}`,
+    Markup.inlineKeyboard([[Markup.button.callback('🔙Back', 'Weather')]])
+    )
 })
-
-bot.hears(['🌤️ Weather'], (ctx) => {
-    showWeatherList(ctx);
-})
-
-//WEATHER FEATURE REGION END
-
-//CURRENCY FEATURE REGION
 
 //Main currency fetch action
 bot.action(/(.+):CURRENCY/, async (ctx) =>{
     currencyName = ctx.match[1]
-    let response = null
-    switch(currencyName){
-        case 'BTC':
-            response = await _currencyHelper.getCurrencyRateByName(currencyName)
-            break
-        case 'ETH':
-            response = await _currencyHelper.getCurrencyRateByName(currencyName)
-            break
-        default:
-            break
-    }
-    console.log(response.data)
 
-    ctx.deleteMessage(lastMessageId)
-    lastMessageId = null
-    ctx.reply(`Currency rate(${currencyName}):` +
-        `\n` + `1 ${currencyName} = ${response.data.price.slice(0,10)} USDT` +
-        `\n\n` + `${new Date().toLocaleString('en-GB', { timeZone: 'Europe/Kyiv' })}`, 
+    let response = await getCurrencyRateByName(CURRENCY_MAPPING[currencyName])
+
+    deleteLastMessage(ctx)
+
+    if(response == null){
+        const message = await ctx.reply('An unexpected error occurred while retrieving the current rate, try again later',
+            Markup.inlineKeyboard([
+                [Markup.button.callback('🔙Return', 'ShowReplyKeyboard')],
+            ])
+        )
+        lastMessageId = message.message_id
+        return
+    }
+
+    const rate = response.data.price.slice(0,10)
+
+    ctx.reply(`Currency rate(${currencyName}):
+        \n1 ${currencyName} = ${rate} USDT
+        \n${getKyivDayTime()}`, 
         Markup.inlineKeyboard([[Markup.button.callback('🔙Back', 'Cryptocurrency Rates')]])
     )
-
-    //console.log(response)
 })
 
-//Creating inline keyboard for currencies
-const showCryptocurrencyList = async (ctx) => {
-    if(lastMessageId) ctx.deleteMessage(lastMessageId)
+/*
+//Weather by location fetch action
+bot.action('WEATHER_BY_LOCATION', async (ctx) =>{
+    waitingForLocation = true
+    deleteLastMessage(ctx)
 
-    const message = await ctx.reply('Choose a currency:', Markup.inlineKeyboard([
-        [Markup.button.callback('₿ Bitcoin', 'BTC:CURRENCY')],
-        [Markup.button.callback('Ξ Ethereum', 'ETH:CURRENCY')],
-        [Markup.button.callback('🔙Back', 'SHOW_REPLY_KEYBOARD')],
-    ]));
+    const message = ctx.reply('Please share your location by clicking the button below or pin it directly via Telegram.', 
+        Markup.inlineKeyboard([[Markup.button.callback('🔙Back', 'Weather')]]).resize()
+    )
+    lastMessageId = message.message_id
+    
+    await ctx.reply('.', Markup.keyboard([[Markup.button.locationRequest('Send Location')]]).oneTime().resize())
 
-    lastMessageId = message.message_id; 
-};
-
-//Currency command catchers
-bot.action(['Cryptocurrency Rates'], (ctx) => {
-    showCryptocurrencyList(ctx);
 })
 
-bot.hears(['📈 Cryptocurrency Rates'], (ctx) => {
-    showCryptocurrencyList(ctx);
+//Awaiter for message with location
+bot.on('location', async (ctx) => {
+    if(!waitingForLocation){
+        return
+    }
+    
+    const {latitude = 0, longitude = 0} = ctx.message?.location
+    
+    try {   
+        response = await getWeatherByLocation(latitude, longitude);
+        
+        const temp = (response.data.main.temp -273.15).toPrecision(3)
+        const feelsLike = (response.data.main.feels_like -273.15).toPrecision(3)
+        const windSpeed = response.data.wind.speed.toPrecision(2)
+        
+        ctx.reply(`Weather at your location(${response.data.name}):\n
+            Temperature: ${temp}°C
+            Feels like: ${feelsLike}°C
+            Wind: ${windSpeed} m/s\n
+            ${getKyivDayTime()}`, 
+        Markup.inlineKeyboard([[Markup.button.callback('🔙Back', 'Weather')]])
+    )
+    } catch (error) {
+        //console.log(error)
+        ctx.reply('Could not fetch weather data. Please try again later.');
+    }
+
+    waitingForLocation = false; // Reset the state
+});
+
+*/
+
+//Start action
+bot.start((ctx) => {
+    const {first_name, last_name, username} = ctx.message.from
+
+    replyToUser = `Hello ${first_name != null ? first_name + ' ' : ''}${last_name != null ? last_name + ' ' : ''}${username != null ? '(@' + username + ')!' : ''}`
+
+    ctx.reply(`${replyToUser}\nNow ${getKyivDayTime()}. Kyiv\nWhat do you want to do?`)
+    
+    showReplyKeyboard(ctx)
 })
-
-//CURRENCY FEATURE REGION END
-
 
 //Bot launch
 bot.launch()
