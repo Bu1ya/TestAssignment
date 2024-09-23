@@ -1,9 +1,19 @@
 //Dependencies
 const { Telegraf, Markup } = require('telegraf');
-const {getWeatherByLocation} = require('./util/weather-helper')
-const {getCurrencyRateByName} = require('./util/currency-helper')
-const {getKyivDayTime} = require('./util/daytime-helper')
-const {CITIES, CURRENCY_MAPPING} = require('./constants')
+const { getApiWithLocation } = require('./util/weatherApi')
+const { getApiWithCurrency } = require('./util/currencyApi')
+const { getKyivDayTime } = require('./util/daytimeKyiv')
+const { getApiResponse } = require('./util/getApiResponse')
+const { CITIES, CURRENCY_MAPPING } = require('./constants')
+const { 
+    replyKeyboard,
+    currencyListKeyboard,
+    weatherListKeyboard,
+    unexpectedErrorKeyboard,
+    backToCurrencyKeyboard,
+    backToWeatherKeyboard
+ } = require('./keyboards')
+ 
 require('dotenv').config();
 
 //Bot instance
@@ -14,51 +24,80 @@ const bot = new Telegraf(process.env.BOT_API)
 let lastMessageId
 
 
-function deleteLastMessage(ctx){
+const deleteLastMessage = (ctx) => {
     if(lastMessageId){
         ctx.deleteMessage(lastMessageId)
     }
     lastMessageId = null
 }
 
-async function showReplyKeyboard(ctx){
-    deleteLastMessage(ctx)
-    
-    const message = await ctx.reply('Choose an option:',
-        Markup.keyboard([['📈 Cryptocurrency Rates', '🌤️ Weather']]).resize().oneTime())
-    
-    lastMessageId = message.message_id
+const replyWithKeyboard = async (ctx, message, keyboard) => {
+    const reply = await ctx.reply(message, keyboard)
+    lastMessageId = reply.message_id
 }
 
-//Creating inline keyboard for weather
-const showWeatherList = async (ctx) => {
+const showMessage = (ctx, message, keyboard) => {
     deleteLastMessage(ctx)
-    
-    const message = await ctx.reply('Choose a location:', 
-        Markup.inlineKeyboard([
-        [Markup.button.callback('🇺🇦 Kyiv', 'Kyiv:WEATHER')],
-        [Markup.button.callback('🇬🇧 London', 'London:WEATHER')],
-        [Markup.button.callback('🇵🇱 Warsaw', 'Warsaw:WEATHER')],
-        //[Markup.button.callback('📍 Weather by location', 'WEATHER_BY_LOCATION')],
-        [Markup.button.callback('🔙 Back', 'ShowReplyKeyboard')],
-    ]));
-    lastMessageId = message.message_id
-};
+    replyWithKeyboard(ctx, message, keyboard)
+}
 
-//Creating inline keyboard for currencies
-const showCryptocurrencyList = async (ctx) => {
+const showReplyKeyboard = async (ctx) => showMessage(ctx, 'Choose an option:', replyKeyboard)
+
+const showWeatherList = async (ctx) => showMessage(ctx, 'Choose a location:', weatherListKeyboard)
+const showCryptocurrencyList = async (ctx) => showMessage(ctx, 'Choose a currency:', currencyListKeyboard)
+
+const showCurrencyMenuKeyboard = async (ctx) => showMessage(ctx, 'Choose an option:', backToCurrencyKeyboard)
+const showWeatherMenuKeyboard = async (ctx) => showMessage(ctx, 'Choose an option:', backToWeatherKeyboard)
+
+const showUnexpectedErrorKeyboard = async (ctx) => showMessage(ctx, 'An unexpected error occurred while retrieving the data, try again later', unexpectedErrorKeyboard)
+
+
+const weatherAction = async (ctx) =>{
+    let cityName = ctx.match[1]
+    let locationCoords = CITIES[cityName]
+
+    let response = await getApiResponse(getApiWithLocation(locationCoords[0], locationCoords[1]))
+    
     deleteLastMessage(ctx)
+
+    if(response == null){
+        showUnexpectedErrorKeyboard(ctx)
+        return
+    }
+
+    const temp = (response.data.main.temp -273.15).toPrecision(3)
+    const feelsLike = (response.data.main.feels_like -273.15).toPrecision(3)
+    const windSpeed = response.data.wind.speed.toPrecision(2)
     
-    const message = await ctx.reply('Choose a currency:', 
-        Markup.inlineKeyboard([
-            [Markup.button.callback('₿ Bitcoin', 'BTC:CURRENCY')],
-            [Markup.button.callback('Ξ Ethereum', 'ETH:CURRENCY')],
-            [Markup.button.callback('🔙Back', 'ShowReplyKeyboard')],
-        ]))
-        
-        lastMessageId = message.message_id
-    };
+    await ctx.reply(`Weather in ${cityName}:
+        \n🌡️Temperature: ${temp}°C\n🌡️Feels like: ${feelsLike}°C\n🌬️Wind: ${windSpeed} m/s
+        \n${getKyivDayTime()}`
+    )
+
+    showWeatherMenuKeyboard(ctx)
+}
+
+const currencyAction = async (ctx) => {
+    currencyName = ctx.match[1]
+
+    let response = await getApiResponse(getApiWithCurrency(CURRENCY_MAPPING[currencyName]))
+
+    deleteLastMessage(ctx)
+
+    if(response == null){
+        showUnexpectedErrorKeyboard(ctx)
+        return
+    }
+
+    const rate = response.data.price.slice(0,10)
+
+    await ctx.reply(`Currency rate(${currencyName}):
+        \n1 ${currencyName} = ${rate} USDT
+        \n${getKyivDayTime()}`
+    )
     
+    showCurrencyMenuKeyboard(ctx)
+}
 
 bot.action('ShowReplyKeyboard', showReplyKeyboard);
 
@@ -68,63 +107,26 @@ bot.hears(['🌤️ Weather'], showWeatherList)
 bot.action(['Cryptocurrency Rates'], showCryptocurrencyList)
 bot.hears(['📈 Cryptocurrency Rates'], showCryptocurrencyList)
 
-//Main weather location fetch action
-bot.action(/(.+):WEATHER/, async (ctx) =>{
-    let cityName = ctx.match[1]
-    let locationCoords = CITIES[`${cityName}`]
+bot.action(/(.+):WEATHER/, weatherAction)
+bot.action(/(.+):CURRENCY/, currencyAction)
 
-    let response = await getWeatherByLocation(locationCoords[0], locationCoords[1])
+//Start action
+bot.start((ctx) => {
+    const {first_name, last_name, username} = ctx.message.from
+
+    replyToUser = `Hello ${first_name ? `${first_name} ` : ''}${last_name ? `${last_name} ` : ''}${username ? `(@${username})!` : '!'}`
+
+    ctx.reply(`${replyToUser}\nNow ${getKyivDayTime()}. Kyiv\nWhat do you want to do?`)
     
-    deleteLastMessage(ctx)
-
-    if(response == null){
-        const message = await ctx.reply('An unexpected error occurred while retrieving the weather, try again later',
-            Markup.inlineKeyboard([
-                [Markup.button.callback('🔙Return', 'ShowReplyKeyboard')],
-            ])
-        )
-        lastMessageId = message.message_id
-        return
-    }
-
-    const temp = (response.data.main.temp -273.15).toPrecision(3)
-    const feelsLike = (response.data.main.feels_like -273.15).toPrecision(3)
-    const windSpeed = response.data.wind.speed.toPrecision(2)
-
-    
-    ctx.reply(`Weather in ${cityName}:
-        \n🌡️Temperature: ${temp}°C\n🌡️Feels like: ${feelsLike}°C\n🌬️Wind: ${windSpeed} m/s
-        \n${getKyivDayTime()}`,
-    Markup.inlineKeyboard([[Markup.button.callback('🔙Back', 'Weather')]])
-    )
+    showReplyKeyboard(ctx)
 })
 
-//Main currency fetch action
-bot.action(/(.+):CURRENCY/, async (ctx) =>{
-    currencyName = ctx.match[1]
+//Bot launch
+bot.launch()
 
-    let response = await getCurrencyRateByName(CURRENCY_MAPPING[currencyName])
-
-    deleteLastMessage(ctx)
-
-    if(response == null){
-        const message = await ctx.reply('An unexpected error occurred while retrieving the current rate, try again later',
-            Markup.inlineKeyboard([
-                [Markup.button.callback('🔙Return', 'ShowReplyKeyboard')],
-            ])
-        )
-        lastMessageId = message.message_id
-        return
-    }
-
-    const rate = response.data.price.slice(0,10)
-
-    ctx.reply(`Currency rate(${currencyName}):
-        \n1 ${currencyName} = ${rate} USDT
-        \n${getKyivDayTime()}`, 
-        Markup.inlineKeyboard([[Markup.button.callback('🔙Back', 'Cryptocurrency Rates')]])
-    )
-})
+// Enable graceful stop
+process.once('SIGINT', () => bot.stop('SIGINT'))
+process.once('SIGTERM', () => bot.stop('SIGTERM'))
 
 /*
 //Weather by location fetch action
@@ -172,21 +174,3 @@ bot.on('location', async (ctx) => {
 });
 
 */
-
-//Start action
-bot.start((ctx) => {
-    const {first_name, last_name, username} = ctx.message.from
-
-    replyToUser = `Hello ${first_name != null ? first_name + ' ' : ''}${last_name != null ? last_name + ' ' : ''}${username != null ? '(@' + username + ')!' : ''}`
-
-    ctx.reply(`${replyToUser}\nNow ${getKyivDayTime()}. Kyiv\nWhat do you want to do?`)
-    
-    showReplyKeyboard(ctx)
-})
-
-//Bot launch
-bot.launch()
-
-// Enable graceful stop
-process.once('SIGINT', () => bot.stop('SIGINT'))
-process.once('SIGTERM', () => bot.stop('SIGTERM'))
