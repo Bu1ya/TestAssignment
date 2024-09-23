@@ -60,7 +60,7 @@ const weatherAction = async (ctx) =>{
     
     deleteLastMessage(ctx)
 
-    if(response == null){
+    if(!response){
         showUnexpectedErrorKeyboard(ctx)
         return
     }
@@ -84,7 +84,7 @@ const currencyAction = async (ctx) => {
 
     deleteLastMessage(ctx)
 
-    if(response == null){
+    if(!response){
         showUnexpectedErrorKeyboard(ctx)
         return
     }
@@ -112,7 +112,7 @@ bot.action(/(.+):CURRENCY/, currencyAction)
 
 //Start action
 bot.start((ctx) => {
-    const {first_name, last_name, username} = ctx.message.from
+    const { first_name, last_name, username } = ctx.message.from
 
     replyToUser = `Hello ${first_name ? `${first_name} ` : ''}${last_name ? `${last_name} ` : ''}${username ? `(@${username})!` : '!'}`
 
